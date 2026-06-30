@@ -1013,6 +1013,7 @@ class Config:
     run_immediately: bool = True              # 启动时是否立即执行一次（非定时模式）
     market_review_enabled: bool = True        # 是否启用大盘复盘
     pre_market_analysis_enabled: bool = False  # 是否启用盘前分析（在大盘复盘前新增外围市场盘前分析章节）
+    stock_analysis_enabled: bool = True         # 是否启用个股分析（设为 false 可只发送盘前分析/大盘复盘）
     daily_market_context_enabled: bool = True   # 是否将大盘环境摘要用于个股分析 Prompt 与保守护栏
     # 大盘复盘市场区域：cn(A股)、hk(港股)、us(美股)、jp(日股)、kr(韩股)、both(全部市场)
     market_review_region: str = "cn"
@@ -1930,6 +1931,7 @@ class Config:
             run_immediately=legacy_run_immediately,
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
             pre_market_analysis_enabled=os.getenv('PRE_MARKET_ANALYSIS_ENABLED', 'false').lower() == 'true',
+            stock_analysis_enabled=os.getenv('STOCK_ANALYSIS_ENABLED', 'true').lower() == 'true',
             daily_market_context_enabled=os.getenv('DAILY_MARKET_CONTEXT_ENABLED', 'true').lower() == 'true',
             market_review_region=cls._parse_market_review_region(
                 os.getenv('MARKET_REVIEW_REGION', 'cn')

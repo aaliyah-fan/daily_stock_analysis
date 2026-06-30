@@ -696,6 +696,7 @@ def run_full_analysis(
         should_pre_market = (
             getattr(config, 'pre_market_analysis_enabled', False)
         )
+        should_stock_analysis = getattr(config, 'stock_analysis_enabled', True)
         merge_notification = (
             should_pre_market
             or (
@@ -771,14 +772,18 @@ def run_full_analysis(
                 require_current_query_match=True,
             )
 
-        # 1. 运行个股分析
-        results = pipeline.run(
-            stock_codes=stock_codes,
-            dry_run=args.dry_run,
-            send_notification=not args.no_notify,
-            merge_notification=merge_notification,
-            current_time=analysis_reference_time,
-        )
+        # 1. 运行个股分析（可通过 STOCK_ANALYSIS_ENABLED 关闭）
+        if should_stock_analysis:
+            results = pipeline.run(
+                stock_codes=stock_codes,
+                dry_run=args.dry_run,
+                send_notification=not args.no_notify,
+                merge_notification=merge_notification,
+                current_time=analysis_reference_time,
+            )
+        else:
+            results = []
+            logger.info("[个股分析] 已通过 STOCK_ANALYSIS_ENABLED=false 关闭，跳过个股分析")
 
         if should_use_daily_market_context and not market_context_summary:
             (
