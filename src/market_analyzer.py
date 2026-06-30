@@ -1573,11 +1573,15 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
         # 全球市场信号（仅 A 股大盘复盘时注入外围参考数据）
         global_signals = self._get_global_market_signals()
         global_signal_hint = ""
+        global_signals_hint_line = ""
+        global_signals_section = ""
         if global_signals:
             global_signal_hint = (
                 "（先总结外围市场隔夜/盘前的总体多空方向，再结合A股指数变化判断内外联动方向。"
                 "注意：外围数据仅为盘前参考，最终判断以A股自身量价信号为准。）"
             )
+            global_signals_hint_line = '若有外围数据，先给内外联动定性（如"外围偏暖/A股自身放量，共振偏多"）。'
+            global_signals_section = "### 零、外围市场环境\n（" + global_signal_hint + "）\n"
 
         output_template_sections = self._build_output_template_sections(review_language)
         zh_market_scope_name = self._get_market_scope_name("zh")
@@ -1687,9 +1691,9 @@ Output the report content directly, no extra commentary.
 
 ## {zh_report_title}
 
-> 一句话给出今日市场状态、核心矛盾和明日优先观察方向。{"若有外围数据，先给内外联动定性（如"外围偏暖/A股自身放量，共振偏多"）。" if global_signals else ""}
+        > 一句话给出今日市场状态、核心矛盾和明日优先观察方向。{global_signals_hint_line}
 
-{"### 零、外围市场环境\n（" + global_signal_hint + "）\n" if global_signals else ""}### 一、盘面总览
+{global_signals_section}### 一、盘面总览
 （{market_summary_hint}）
 
 ### 二、指数结构
