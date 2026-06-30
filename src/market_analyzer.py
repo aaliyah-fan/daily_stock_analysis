@@ -1377,6 +1377,83 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         add_section("风险提示", "（列出需要关注的风险点；最后补充“建议仅供参考，不构成投资建议”。）")
         return "\n\n".join(sections)
 
+    def _get_global_market_signals(self) -> str:
+        """
+        Fetch global market signals for pre-market reference using yfinance.
+        Includes US indices, VIX, commodities, forex, and rates.
+        Lights-out: never raises, returns empty string on any failure.
+        Only meaningful when the A-share review needs external context.
+        """
+        if self.region != "cn":
+            return ""
+        try:
+            import yfinance as yf
+
+            symbols = [
+                # US Market: name, yf_symbol, group
+                ("DJI", "^DJI", "美股方向"),
+                ("IXIC", "^IXIC", "美股方向"),
+                ("SPX", "^GSPC", "美股方向"),
+                ("RUT", "^RUT", "美股方向"),
+                ("SOX", "^SOX", "半导体风向"),
+                # Sentiment / Macro
+                ("VIX", "^VIX", "恐慌/避险"),
+                ("USDCNH", "USDCNH=X", "汇率"),
+                ("TNX", "^TNX", "美债"),
+                # Commodities
+                ("GC", "GC=F", "大宗商品"),
+                ("CL", "CL=F", "大宗商品"),
+            ]
+
+            name_map = {
+                "DJI": "道琼斯",
+                "IXIC": "纳斯达克",
+                "SPX": "标普500",
+                "RUT": "罗素2000",
+                "SOX": "费城半导体",
+                "VIX": "VIX恐慌指数",
+                "USDCNH": "离岸人民币(USDCNH)",
+                "TNX": "美国10Y国债收益率",
+                "GC": "黄金期货",
+                "CL": "WTI原油",
+            }
+
+            lines = []
+            for code, yf_sym, group in symbols:
+                try:
+                    t = yf.Ticker(yf_sym)
+                    h = t.history(period="2d")
+                    if h.empty:
+                        continue
+                    cur = float(h.iloc[-1]["Close"])
+                    prev = float(h.iloc[-2]["Close"]) if len(h) > 1 else cur
+                    chg_pct = ((cur - prev) / prev * 100) if prev else 0
+                    direction = "↑" if chg_pct > 0 else "↓" if chg_pct < 0 else "-"
+                    label = name_map.get(code, code)
+                    lines.append(f"- {label}: {cur:.2f} ({direction}{abs(chg_pct):.2f}%) [{group}]")
+                except Exception:
+                    continue
+
+            if lines:
+                logger.info(
+                    "[大盘] %s action=global_signals status=success count=%d",
+                    self._log_context(),
+                    len(lines),
+                )
+                return "## 全球市场环境（盘前多空参考）\n" + "\n".join(lines)
+            else:
+                logger.warning(
+                    "[大盘] %s action=global_signals status=empty",
+                    self._log_context(),
+                )
+        except Exception as e:
+            logger.warning(
+                "[大盘] %s action=global_signals status=failed error=%s",
+                self._log_context(),
+                e,
+            )
+        return ""
+
     def _build_review_prompt(self, overview: MarketOverview, news: List) -> str:
         """构建复盘报告 Prompt"""
         review_language = self._get_review_language()
@@ -1493,6 +1570,15 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
                 else "2-3句话概括指数表现、新闻线索和整体风险状态，不要补写未提供的市场宽度或资金流数据"
             )
 
+        # 全球市场信号（仅 A 股大盘复盘时注入外围参考数据）
+        global_signals = self._get_global_market_signals()
+        global_signal_hint = ""
+        if global_signals:
+            global_signal_hint = (
+                "（先总结外围市场隔夜/盘前的总体多空方向，再结合A股指数变化判断内外联动方向。"
+                "注意：外围数据仅为盘前参考，最终判断以A股自身量价信号为准。）"
+            )
+
         output_template_sections = self._build_output_template_sections(review_language)
         zh_market_scope_name = self._get_market_scope_name("zh")
         zh_report_title = f"{overview.date} 大盘复盘"
@@ -1586,6 +1672,8 @@ Output the report content directly, no extra commentary.
 
 {data_limits_block}
 
+{global_signals}
+
 ## 市场新闻
 {news_placeholder}
 
@@ -1599,9 +1687,9 @@ Output the report content directly, no extra commentary.
 
 ## {zh_report_title}
 
-> 一句话给出今日市场状态、核心矛盾和明日优先观察方向。
+> 一句话给出今日市场状态、核心矛盾和明日优先观察方向。{"若有外围数据，先给内外联动定性（如"外围偏暖/A股自身放量，共振偏多"）。" if global_signals else ""}
 
-### 一、盘面总览
+{"### 零、外围市场环境\n（" + global_signal_hint + "）\n" if global_signals else ""}### 一、盘面总览
 （{market_summary_hint}）
 
 ### 二、指数结构
