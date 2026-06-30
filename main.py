@@ -692,11 +692,18 @@ def run_full_analysis(
             config.single_stock_notify = True
 
         # Issue #190: 个股与大盘复盘合并推送
+        # 启用盘前分析时强制合并推送（确保三个章节在同一封邮件）
+        should_pre_market = (
+            getattr(config, 'pre_market_analysis_enabled', False)
+        )
         merge_notification = (
-            getattr(config, 'merge_email_notification', False)
-            and config.market_review_enabled
-            and not getattr(args, 'no_market_review', False)
-            and not config.single_stock_notify
+            should_pre_market
+            or (
+                getattr(config, 'merge_email_notification', False)
+                and config.market_review_enabled
+                and not getattr(args, 'no_market_review', False)
+                and not config.single_stock_notify
+            )
         )
 
         # 创建调度器
@@ -788,6 +795,26 @@ def run_full_analysis(
                 require_current_query_match=True,
             )
             market_context_generated_during_stock = bool(market_context_summary)
+
+        # --- 盘前分析（独立于大盘复盘）---
+        pre_market_report = ""
+        if should_pre_market:
+            try:
+                from src.pre_market_analyzer import generate_pre_market_analysis
+
+                pre_market_report = generate_pre_market_analysis(
+                    analyzer=getattr(pipeline, "analyzer", None),
+                    config=config,
+                )
+                if pre_market_report:
+                    logger.info(
+                        "[盘前分析] 生成成功，长度=%d",
+                        len(pre_market_report),
+                    )
+                else:
+                    logger.warning("[盘前分析] 生成结果为空，跳过盘前分析章节")
+            except Exception as exc:
+                logger.warning("[盘前分析] 生成失败（已忽略，不影响主流程）: %s", exc)
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
         analysis_delay = getattr(config, 'analysis_delay', 0)
@@ -886,9 +913,11 @@ def run_full_analysis(
             elif can_reuse_market_context:
                 market_report = market_context_full_report or market_context_summary
 
-        # Issue #190: 合并推送（个股+大盘复盘）
-        if merge_notification and (results or market_report) and not args.no_notify:
+        # Issue #190: 合并推送（盘前分析 + 大盘复盘 + 个股决策仪表盘）
+        if merge_notification and (pre_market_report or results or market_report) and not args.no_notify:
             parts = []
+            if pre_market_report:
+                parts.append(f"# 📊 盘前分析\n\n{pre_market_report}")
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")
             if results:
@@ -901,7 +930,7 @@ def run_full_analysis(
                 combined_content = "\n\n---\n\n".join(parts)
                 if pipeline.notifier.is_available():
                     if pipeline.notifier.send(combined_content, email_send_to_all=True, route_type="report"):
-                        logger.info("已合并推送（个股+大盘复盘）")
+                        logger.info("已合并推送（盘前分析+个股+大盘复盘）")
                     else:
                         logger.warning("合并推送失败")
 
@@ -930,8 +959,12 @@ def run_full_analysis(
                 now = datetime.now(tz_cn)
                 doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} 大盘复盘"
 
-                # 2. 准备内容 (拼接个股分析和大盘复盘)
+                # 2. 准备内容 (拼接盘前分析、个股分析和大盘复盘)
                 full_content = ""
+
+                # 添加盘前分析（如果有）
+                if pre_market_report:
+                    full_content += f"# 📊 盘前分析\n\n{pre_market_report}\n\n---\n\n"
 
                 # 添加大盘复盘内容（如果有）
                 if market_report:
