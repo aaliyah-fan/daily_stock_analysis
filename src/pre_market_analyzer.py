@@ -210,39 +210,52 @@ def generate_pre_market_analysis(
 
 请基于以上隔夜全球市场数据，生成 {today_str} 的盘前分析报告。严格按输出格式输出。"""
 
-    # 4. 调用 LLM
+    # 4. 调用 LLM（含可选的 LLM 用量记录）
     logger.info("[盘前分析] 正在调用 AI 生成盘前分析报告...")
     llm_started_at = time.perf_counter()
+    
+    # 安全导入 LLM 记录器（模块可能不存在）
+    _record_llm_run = _record_llm_run_started = None
     try:
-        from src.core.llm_recorder import record_llm_run, record_llm_run_started
+        from src.core.llm_recorder import record_llm_run as _r, record_llm_run_started as _rs
+        _record_llm_run = _r
+        _record_llm_run_started = _rs
+    except ImportError:
+        pass
 
-        record_llm_run_started(
+    _model = getattr(runtime_config, "litellm_model", None)
+    if _record_llm_run_started:
+        _record_llm_run_started(
             provider="litellm",
-            model=getattr(runtime_config, "litellm_model", None),
+            model=_model,
             call_type="pre_market_analysis",
         )
+    try:
         result = analyzer.generate_text(full_prompt, max_tokens=4096, temperature=0.7)
-        record_llm_run(
+    except Exception as exc:
+        if _record_llm_run:
+            _record_llm_run(
+                success=False,
+                provider="litellm",
+                model=_model,
+                call_type="pre_market_analysis",
+                duration_ms=int((time.perf_counter() - llm_started_at) * 1000),
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+        logger.error("[盘前分析] AI 生成失败: %s", exc)
+        return ""
+
+    if _record_llm_run:
+        _record_llm_run(
             success=bool(result),
             provider="litellm",
-            model=getattr(runtime_config, "litellm_model", None),
+            model=_model,
             call_type="pre_market_analysis",
             duration_ms=int((time.perf_counter() - llm_started_at) * 1000),
             error_type=None if result else "EmptyResponse",
             error_message=None if result else "empty pre-market analysis response",
         )
-    except Exception as exc:
-        record_llm_run(
-            success=False,
-            provider="litellm",
-            model=getattr(runtime_config, "litellm_model", None),
-            call_type="pre_market_analysis",
-            duration_ms=int((time.perf_counter() - llm_started_at) * 1000),
-            error_type=type(exc).__name__,
-            error_message=exc,
-        )
-        logger.error("[盘前分析] AI 生成失败: %s", exc)
-        return ""
 
     if not result:
         logger.warning("[盘前分析] AI 返回空内容")
