@@ -231,7 +231,7 @@ def generate_pre_market_analysis(
             call_type="pre_market_analysis",
         )
     try:
-        result = analyzer.generate_text(full_prompt, max_tokens=4096, temperature=0.7)
+        result = analyzer.generate_text(full_prompt, max_tokens=8192, temperature=0.7)
     except Exception as exc:
         if _record_llm_run:
             _record_llm_run(
