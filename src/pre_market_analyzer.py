@@ -23,33 +23,147 @@ from src.config import get_config, Config
 logger = logging.getLogger(__name__)
 
 # ─── 外围市场数据符号 ───────────────────────────────────────────
+# market_region: US/HK/JP/KR/SG — 用于休市检测；None 表示 24h 商品/外汇不检测
 _GLOBAL_MARKET_SYMBOLS = [
-    # (code, yf_symbol, group, chinese_name)
-    ("DJI", "^DJI", "美股三大指数", "道琼斯"),
-    ("IXIC", "^IXIC", "美股三大指数", "纳斯达克"),
-    ("SPX", "^GSPC", "美股三大指数", "标普500"),
-    ("RUT", "^RUT", "罗素2000小盘", "罗素2000"),
-    ("SOX", "^SOX", "半导体风向标", "费城半导体SOX"),
-    ("VIX", "^VIX", "恐慌情绪", "VIX恐慌指数"),
-    ("USDCNH", "CNH=X", "汇率", "离岸人民币"),
-    ("TNX", "^TNX", "美债", "美国10Y国债收益率"),
-    ("GC", "GC=F", "大宗商品", "黄金期货"),
-    ("CL", "CL=F", "大宗商品", "WTI原油"),
+    # (code, yf_symbol, group, chinese_name, market_region)
+    ("DJI",   "^DJI",   "美股三大指数",   "道琼斯",              "US"),
+    ("IXIC",  "^IXIC",  "美股三大指数",   "纳斯达克",            "US"),
+    ("SPX",   "^GSPC",  "美股三大指数",   "标普500",            "US"),
+    ("RUT",   "^RUT",   "罗素2000小盘",   "罗素2000",           "US"),
+    ("SOX",   "^SOX",   "半导体风向标",   "费城半导体SOX",       "US"),
+    ("VIX",   "^VIX",   "恐慌情绪",       "VIX恐慌指数",         "US"),
+    ("USDCNH","CNH=X",  "汇率",           "离岸人民币",          None),  # 外汇24h，不检测休市
+    ("TNX",   "^TNX",   "美债",           "美国10Y国债收益率",   "US"),
+    ("GC",    "GC=F",   "大宗商品",       "黄金期货",            None),  # 商品有独立交易时间
+    ("CL",    "CL=F",   "大宗商品",       "WTI原油",            None),
 ]
 
 # ─── 亚太市场数据符号 ───────────────────────────────────────────
 _ASIA_PACIFIC_SYMBOLS = [
-    ("KS11", "^KS11", "亚太市场", "韩国综合KOSPI"),
-    ("KOSDAQ", "^KQ11", "亚太市场", "韩国创业板KOSDAQ"),
-    ("N225", "^N225", "亚太市场", "日经225"),
-    ("HSI", "^HSI", "亚太市场", "恒生指数"),
-    ("HSTECH", "^HSTECH", "亚太市场", "恒生科技指数"),
+    ("KS11",   "^KS11",   "亚太市场", "韩国综合KOSPI",      "KR"),
+    ("KOSDAQ", "^KQ11",   "亚太市场", "韩国创业板KOSDAQ",   "KR"),
+    ("N225",   "^N225",   "亚太市场", "日经225",            "JP"),
+    ("HSI",    "^HSI",    "亚太市场", "恒生指数",           "HK"),
+    ("HSTECH", "^HSTECH", "亚太市场", "恒生科技指数",       "HK"),
 ]
 
 # A50 期货在新加坡交易所，yfinance 代码
-_A50_SYMBOL = ("A50", "CNY=X", "A股期货", "富时A50期货")
-# 中概股指数
-_HXC_SYMBOL = ("HXC", "^HXC", "中概股方向", "中概股HXC")
+_A50_SYMBOL = ("A50", "CNY=X", "A股期货", "富时A50期货", "SG")
+# 中概股指数（美股交易）
+_HXC_SYMBOL = ("HXC", "^HXC", "中概股方向", "中概股HXC", "US")
+
+
+# ─── 各市场节假日表 ─────────────────────────────────────────────
+# 格式：{ region: { (month, day): "节日名称", ... } }
+# 仅收录主要休市日；农历节日（春节/中秋等）按近似公历日期覆盖近年常见区间
+_MARKET_HOLIDAYS = {
+    "US": {
+        (1, 1):   "元旦 (New Year's Day)",
+        (1, 20):  "马丁·路德·金纪念日附近",
+        (2, 17):  "总统日附近 (Presidents' Day)",
+        (4, 18):  "耶稣受难日附近 (Good Friday)",
+        (5, 26):  "阵亡将士纪念日附近 (Memorial Day)",
+        (6, 19):  "六月节 (Juneteenth)",
+        (7, 4):   "独立日 (Independence Day)",
+        (9, 1):   "劳动节附近 (Labor Day)",
+        (11, 27): "感恩节附近 (Thanksgiving)",
+        (12, 25): "圣诞节 (Christmas Day)",
+    },
+    "HK": {
+        (1, 1):   "元旦",
+        (1, 29):  "农历新年假期附近",
+        (1, 30):  "农历新年假期附近",
+        (1, 31):  "农历新年假期附近",
+        (2, 1):   "农历新年假期附近",
+        (2, 17):  "农历新年假期附近（近年）",
+        (4, 4):   "清明节附近",
+        (4, 5):   "清明节附近",
+        (4, 18):  "耶稣受难日附近",
+        (4, 21):  "复活节星期一附近",
+        (5, 1):   "劳动节",
+        (5, 5):   "佛诞附近",
+        (5, 31):  "端午节附近",
+        (6, 19):  "端午节附近（近年）",
+        (7, 1):   "香港特别行政区成立纪念日",
+        (9, 22):  "中秋节翌日附近",
+        (9, 29):  "中秋节翌日附近（近年）",
+        (10, 1):  "国庆节",
+        (10, 7):  "重阳节附近",
+        (10, 29): "重阳节附近（近年）",
+        (12, 25): "圣诞节",
+        (12, 26): "圣诞节翌日",
+    },
+    "JP": {
+        (1, 1):   "元旦 (元日)",
+        (1, 2):   "元旦假期",
+        (1, 3):   "元旦假期",
+        (1, 13):  "成人日附近",
+        (2, 11):  "建国纪念日",
+        (2, 23):  "天皇诞生日",
+        (3, 20):  "春分日附近",
+        (4, 29):  "昭和日",
+        (5, 3):   "宪法纪念日",
+        (5, 4):   "绿之日",
+        (5, 5):   "儿童日",
+        (7, 21):  "海之日附近",
+        (8, 11):  "山之日",
+        (9, 15):  "敬老日附近",
+        (9, 23):  "秋分日附近",
+        (10, 13): "体育日附近",
+        (11, 3):  "文化日",
+        (11, 23): "勤劳感谢日",
+    },
+    "KR": {
+        (1, 1):   "元旦 (신정)",
+        (2, 10):  "农历新年附近 (설날)",
+        (3, 1):   "三一节",
+        (5, 5):   "儿童节 (어린이날)",
+        (5, 15):  "佛诞附近 (부처님오신날)",
+        (6, 6):   "显忠日 (현충일)",
+        (8, 15):  "光复节 (광복절)",
+        (9, 15):  "秋夕附近 (추석)",
+        (10, 3):  "开天节 (개천절)",
+        (10, 9):  "韩文日 (한글날)",
+        (12, 25): "圣诞节 (크리스마스)",
+    },
+    "SG": {
+        (1, 1):   "元旦 (New Year's Day)",
+        (2, 10):  "农历新年附近 (Chinese New Year)",
+        (4, 18):  "耶稣受难日附近 (Good Friday)",
+        (5, 1):   "劳动节 (Labour Day)",
+        (5, 12):  "卫塞节附近 (Vesak Day)",
+        (8, 9):   "国庆日 (National Day)",
+        (10, 27): "屠妖节附近 (Deepavali)",
+        (12, 25): "圣诞节 (Christmas Day)",
+    },
+}
+
+
+def _detect_market_holiday(region: Optional[str]) -> Optional[str]:
+    """检测指定市场区域今日是否在已知假期附近（±2 天容差）。
+
+    Returns:
+        假期名称字符串，或 None（非假期）
+    """
+    if region is None or region not in _MARKET_HOLIDAYS:
+        return None
+
+    today = datetime.now()
+    holidays = _MARKET_HOLIDAYS[region]
+
+    # 精确匹配 ±2 天（覆盖周末调休和近似的农历节日）
+    for offset in (0, -1, -2, 1, 2):
+        try:
+            check_date = today + timedelta(days=offset)
+            key = (check_date.month, check_date.day)
+            if key in holidays:
+                # 周六日不报休市（本身就是非交易日）
+                if check_date.weekday() >= 5 and offset == 0:
+                    continue
+                return holidays[key]
+        except Exception:
+            continue
+    return None
 
 # ─── Prompt 模板（详细版——基于用户盘前分析docx模板）─────────────────────
 _PRE_MARKET_SYSTEM_PROMPT = """你是一位经验丰富的A股盘前分析师，你的职责是撰写一份专业、详尽的盘前分析报告。
@@ -61,6 +175,7 @@ _PRE_MARKET_SYSTEM_PROMPT = """你是一位经验丰富的A股盘前分析师，
 - **九个部分缺一不可**：严格按以下九个章节输出，每个章节都必须有实质内容。
 - **可操作**：给出具体的板块和个股方向，让读者知道开盘后该怎么做。
 - 避免使用绝对化词语，保持客观冷静。
+- **市场休市处理**：数据开头有「市场交易状态概要」板块，标注了各市场休市状态（⚠️）。若某市场今日休市（如港股假期），该市场数据为最近交易日数据，分析时需注明"XX市场今日休市"而非简单标"数据缺失"。休市不影响其他市场的分析判断。
 - **假如某些数据不可用，标注"⚪ 数据缺失"并用已知信息做有限推断，不可跳过该章节。**
 
 ## 输出格式（必须严格按以下九个章节输出，一个都不能少）
@@ -286,6 +401,8 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
     """
     通过 yfinance 拉取全球市场隔夜数据（含亚太市场）。
 
+    数据缺失时会检测对应市场是否休市，并明确标注而非静默跳过。
+
     Returns:
         格式化的数据文本块，失败时返回空字符串
     """
@@ -297,32 +414,79 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
     if include_asia:
         symbols.extend(_ASIA_PACIFIC_SYMBOLS)
 
-    lines = []
-    for code, yf_sym, group, cn_name in symbols:
+    data_lines = []       # 有数据的行
+    holiday_lines = []    # 休市/数据缺失的标注行
+
+    for row in symbols:
+        code, yf_sym, group, cn_name, region = row  # type: ignore[misc]
         try:
             import yfinance as yf
             t = yf.Ticker(yf_sym)
             h = t.history(period="5d")
             if h.empty:
+                # 数据为空 → 检测休市
+                holiday = _detect_market_holiday(region)
+                if holiday:
+                    holiday_lines.append(
+                        f"- ⚠️ {cn_name}({code}): 今日休市 — {holiday} [{group}]"
+                    )
+                else:
+                    holiday_lines.append(
+                        f"- ⚠️ {cn_name}({code}): 数据不可用（可能休市、非交易日或数据延迟）[{group}]"
+                    )
                 continue
+
             cur = float(h.iloc[-1]["Close"])
             prev_day = float(h.iloc[-2]["Close"]) if len(h) > 1 else cur
             chg_pct = ((cur - prev_day) / prev_day * 100) if prev_day else 0
-            # 5 日趋势
             trend_5d = ((cur - float(h.iloc[0]["Close"])) / float(h.iloc[0]["Close"]) * 100) if len(h) > 1 else 0
             direction = "↑" if chg_pct > 0 else "↓" if chg_pct < 0 else "-"
             trend_dir = "↑" if trend_5d > 0 else "↓" if trend_5d < 0 else "-"
+
+            # 检查数据新鲜度：最近交易日是否为今天（仅针对有休市检测的区域）
+            data_date = h.index[-1].date() if hasattr(h.index[-1], 'date') else h.index[-1]
+            today = datetime.now().date()
+            stale_note = ""
+            if region and data_date != today:
+                days_behind = (today - data_date).days
+                if days_behind == 1:
+                    stale_note = f" [最新数据日期: {data_date}，隔1个自然日]"
+                elif 2 <= days_behind <= 5:
+                    stale_note = f" [最新数据日期: {data_date}，隔{days_behind}个自然日，可能休市]"
+
+            lines = data_lines  # 有数据的归入 data_lines
             lines.append(
                 f"- {cn_name}({code}): {cur:.2f} | 日变动: {direction}{abs(chg_pct):.2f}% "
-                f"| 5日趋势: {trend_dir}{abs(trend_5d):.2f}% [{group}]"
+                f"| 5日趋势: {trend_dir}{abs(trend_5d):.2f}% [{group}]{stale_note}"
             )
         except Exception as e:
             logger.debug("yfinance 拉取 %s 失败: %s", code, e)
-            continue
+            holiday = _detect_market_holiday(region)
+            if holiday:
+                holiday_lines.append(
+                    f"- ⚠️ {cn_name}({code}): 今日休市 — {holiday} [{group}]"
+                )
+            else:
+                holiday_lines.append(
+                    f"- ⚠️ {cn_name}({code}): 数据拉取失败 [{group}]"
+                )
 
-    if lines:
-        return "## 隔夜全球及亚太市场数据\n\n" + "\n".join(lines)
-    return ""
+    if not data_lines and not holiday_lines:
+        return ""
+
+    # 组装输出：先放数据，再放休市/缺失标注
+    result_parts = []
+    result_parts.append("## 市场交易状态概要\n")
+    if holiday_lines:
+        result_parts.append("\n".join(holiday_lines))
+    else:
+        result_parts.append("✅ 所有可检测市场数据正常获取，未检测到主要市场休市。")
+
+    if data_lines:
+        result_parts.append("\n\n## 隔夜全球及亚太市场数据\n")
+        result_parts.append("\n".join(data_lines))
+
+    return "\n".join(result_parts)
 
 
 def generate_pre_market_analysis(
