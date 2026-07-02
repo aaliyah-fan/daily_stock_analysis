@@ -31,7 +31,7 @@ _GLOBAL_MARKET_SYMBOLS = [
     ("RUT", "^RUT", "罗素2000小盘", "罗素2000"),
     ("SOX", "^SOX", "半导体风向标", "费城半导体SOX"),
     ("VIX", "^VIX", "恐慌情绪", "VIX恐慌指数"),
-    ("USDCNH", "USDCNH=X", "汇率", "离岸人民币"),
+    ("USDCNH", "CNH=X", "汇率", "离岸人民币"),
     ("TNX", "^TNX", "美债", "美国10Y国债收益率"),
     ("GC", "GC=F", "大宗商品", "黄金期货"),
     ("CL", "CL=F", "大宗商品", "WTI原油"),
@@ -178,7 +178,7 @@ _PRE_MARKET_SYSTEM_PROMPT = """你是一位经验丰富的A股盘前分析师，
 
 ### 5.1 外围板块映射机会
 
-对每个外围强势/弱势板块，列出对应的A股映射标的（给出具体股票名称和代买，帮助读者快速锁定目标）：
+对每个外围强势/弱势板块，列出对应的A股映射标的（给出具体股票名称和代码，帮助读者快速锁定目标）：
 
 | 外围标的 | 方向 | 映射板块 | A股对应标的 | 信号灯 | 重点观察 |
 |---------|------|---------|-----------|--------|---------|
@@ -302,14 +302,20 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
         try:
             import yfinance as yf
             t = yf.Ticker(yf_sym)
-            h = t.history(period="2d")
+            h = t.history(period="5d")
             if h.empty:
                 continue
             cur = float(h.iloc[-1]["Close"])
-            prev = float(h.iloc[-2]["Close"]) if len(h) > 1 else cur
-            chg_pct = ((cur - prev) / prev * 100) if prev else 0
+            prev_day = float(h.iloc[-2]["Close"]) if len(h) > 1 else cur
+            chg_pct = ((cur - prev_day) / prev_day * 100) if prev_day else 0
+            # 5 日趋势
+            trend_5d = ((cur - float(h.iloc[0]["Close"])) / float(h.iloc[0]["Close"]) * 100) if len(h) > 1 else 0
             direction = "↑" if chg_pct > 0 else "↓" if chg_pct < 0 else "-"
-            lines.append(f"- {cn_name}({code}): {cur:.2f} ({direction}{abs(chg_pct):.2f}%) [{group}]")
+            trend_dir = "↑" if trend_5d > 0 else "↓" if trend_5d < 0 else "-"
+            lines.append(
+                f"- {cn_name}({code}): {cur:.2f} | 日变动: {direction}{abs(chg_pct):.2f}% "
+                f"| 5日趋势: {trend_dir}{abs(trend_5d):.2f}% [{group}]"
+            )
         except Exception as e:
             logger.debug("yfinance 拉取 %s 失败: %s", code, e)
             continue
