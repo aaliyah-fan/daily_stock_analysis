@@ -47,8 +47,10 @@ _ASIA_PACIFIC_SYMBOLS = [
     ("HSTECH", "^HSTECH", "亚太市场", "恒生科技指数",       "HK"),
 ]
 
-# A50 期货在新加坡交易所，yfinance 代码
-_A50_SYMBOL = ("A50", "CNY=X", "A股期货", "富时A50期货", "SG")
+# A50 期货在新加坡交易所，yfinance 无稳定符号；改用上证指数(000001.SS)作为A股大盘参考
+# 注：A50 期货在新交所（SGX）代码在 yfinance 中不稳定，部分环境用 "XINA50" 或 "FFI"
+# 此处用上证指数作为替代，足够反映 A 股大盘方向
+_A50_SYMBOL = ("A50", "000001.SS", "A股大盘", "上证指数(替代A50)", "CN")
 # 中概股指数（美股交易）
 _HXC_SYMBOL = ("HXC", "^HXC", "中概股方向", "中概股HXC", "US")
 
@@ -136,6 +138,27 @@ _MARKET_HOLIDAYS = {
         (10, 27): "屠妖节附近 (Deepavali)",
         (12, 25): "圣诞节 (Christmas Day)",
     },
+    "CN": {
+        # A股/港股通节假日（A股休市时北向资金不交易，需特别标注）
+        (1, 1):   "元旦",
+        (1, 28):  "农历新年假期附近",
+        (1, 29):  "农历新年假期附近",
+        (1, 30):  "农历新年假期附近",
+        (1, 31):  "农历新年假期附近",
+        (2, 1):   "农历新年假期附近",
+        (2, 17):  "农历新年假期附近（近年）",
+        (4, 4):   "清明节附近",
+        (4, 5):   "清明节附近",
+        (5, 1):   "劳动节",
+        (5, 31):  "端午节附近",
+        (6, 19):  "端午节附近（近年）",
+        (10, 1):  "国庆节",
+        (10, 2):  "国庆节假期附近",
+        (10, 3):  "国庆节假期附近",
+        (10, 7):  "国庆节假期附近",
+        (10, 29): "重阳节附近（近年）",
+        (12, 25): "圣诞节（部分机构）",
+    },
 }
 
 
@@ -144,8 +167,10 @@ def _get_last_trading_day() -> datetime:
 
     盘前分析在早上 08:30 运行，所有数据都是上一个交易日的数据。
     如果今天是周一，上一个交易日是上周五；其他日期是昨天。
+    返回带时区的 datetime（UTC+8），与 data_date 比较时保持一致。
     """
-    today = datetime.now()
+    tz_cn = timezone(timedelta(hours=8))
+    today = datetime.now(tz_cn)
     if today.weekday() == 0:  # 周一
         return today - timedelta(days=3)
     elif today.weekday() == 6:  # 周日（理论上不会在周日运行，但兜底）
@@ -198,7 +223,7 @@ _PRE_MARKET_SYSTEM_PROMPT = """你是一位经验丰富的A股盘前分析师，
 - **九个部分缺一不可**：严格按以下九个章节输出，每个章节都必须有实质内容。
 - **可操作**：给出具体的板块和个股方向，让读者知道开盘后该怎么做。
 - 避免使用绝对化词语，保持客观冷静。
-- **市场休市处理**：数据开头有「市场交易状态概要」板块，标注了各市场休市状态（⚠️）。若某市场今日休市（如港股假期），该市场数据为最近交易日数据，分析时需注明"XX市场今日休市"而非简单标"数据缺失"。休市不影响其他市场的分析判断。
+- **市场休市处理**：数据开头有「市场交易状态概要」板块，标注了各市场最近交易日是否休市（⚠️）。若某市场最近交易日休市（如港股假期），该市场数据为更早的交易日数据，分析时需注明"XX市场最近交易日休市"而非简单标"数据缺失"。休市不影响其他市场的分析判断。
 - **A股交易时间约束**：A股（沪深/创业板/科创板）交易时间为北京时间 **09:30-11:30**、**13:00-15:00**。报告中的时间节点必须按此书写，开盘指 09:30、午盘指 11:30-13:00、尾盘指 14:30-15:00，绝不可以用其他市场的开盘时间（如美股 21:30、港股 09:30）替代。
 - **假如某些数据不可用，标注"⚪ 数据缺失"并用已知信息做有限推断，不可跳过该章节。**
 
@@ -471,20 +496,26 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
             trend_dir = "↑" if trend_5d > 0 else "↓" if trend_5d < 0 else "-"
 
             # 检查数据新鲜度：数据日期是否为上一个交易日
-            data_date = h.index[-1].date() if hasattr(h.index[-1], 'date') else h.index[-1]
+            # h.index[-1] 可能是 Timestamp 或 datetime，统一转为 date
+            _idx_val = h.index[-1]
+            if hasattr(_idx_val, 'date'):
+                _data_date = _idx_val.date()
+            else:
+                # 兼容纯 datetime 对象
+                _data_date = _idx_val if hasattr(_idx_val, 'year') else None
+
             last_trading_day = _get_last_trading_day()
             last_trading_date = last_trading_day.date()
             stale_note = ""
-            if data_date != last_trading_date:
+            if _data_date and _data_date != last_trading_date:
                 # 数据不是上一个交易日的数据
-                days_behind = (last_trading_date - data_date).days
+                days_behind = (last_trading_date - _data_date).days
                 if days_behind == 1:
-                    stale_note = f" [最新数据日期: {data_date}，为前一个交易日数据]"
+                    stale_note = f" [最新数据日期: {_data_date}，为前一个交易日数据]"
                 elif days_behind >= 2:
-                    stale_note = f" [最新数据日期: {data_date}，隔{days_behind}个交易日，可能期间休市]"
+                    stale_note = f" [最新数据日期: {_data_date}，隔{days_behind}个交易日，可能期间休市]"
 
-            lines = data_lines  # 有数据的归入 data_lines
-            lines.append(
+            data_lines.append(
                 f"- {cn_name}({code}): {cur:.2f} | 日变动: {direction}{abs(chg_pct):.2f}% "
                 f"| 5日趋势: {trend_dir}{abs(trend_5d):.2f}% [{group}]{stale_note}"
             )
