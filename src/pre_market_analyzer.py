@@ -139,8 +139,32 @@ _MARKET_HOLIDAYS = {
 }
 
 
-def _detect_market_holiday(region: Optional[str]) -> Optional[str]:
-    """检测指定市场区域今日是否在已知假期附近（±2 天容差）。
+def _get_last_trading_day() -> datetime:
+    """获取上一个交易日日期（用于盘前分析检测休市）。
+
+    盘前分析在早上 08:30 运行，所有数据都是上一个交易日的数据。
+    如果今天是周一，上一个交易日是上周五；其他日期是昨天。
+    """
+    today = datetime.now()
+    if today.weekday() == 0:  # 周一
+        return today - timedelta(days=3)
+    elif today.weekday() == 6:  # 周日（理论上不会在周日运行，但兜底）
+        return today - timedelta(days=2)
+    elif today.weekday() == 5:  # 周六（同上）
+        return today - timedelta(days=1)
+    else:
+        return today - timedelta(days=1)
+
+
+def _detect_market_holiday(region: Optional[str], check_date: Optional[datetime] = None) -> Optional[str]:
+    """检测指定市场区域在指定日期是否在已知假期附近（±2 天容差）。
+
+    盘前分析场景下，check_date 应为上一个交易日（昨天），
+    因为此时所有数据都是上一个交易日的数据。
+
+    Args:
+        region: 市场区域代码（US/HK/JP/KR/SG）
+        check_date: 要检测的日期，默认为上一个交易日
 
     Returns:
         假期名称字符串，或 None（非假期）
@@ -148,18 +172,17 @@ def _detect_market_holiday(region: Optional[str]) -> Optional[str]:
     if region is None or region not in _MARKET_HOLIDAYS:
         return None
 
-    today = datetime.now()
+    if check_date is None:
+        check_date = _get_last_trading_day()
+
     holidays = _MARKET_HOLIDAYS[region]
 
     # 精确匹配 ±2 天（覆盖周末调休和近似的农历节日）
     for offset in (0, -1, -2, 1, 2):
         try:
-            check_date = today + timedelta(days=offset)
-            key = (check_date.month, check_date.day)
+            d = check_date + timedelta(days=offset)
+            key = (d.month, d.day)
             if key in holidays:
-                # 周六日不报休市（本身就是非交易日）
-                if check_date.weekday() >= 5 and offset == 0:
-                    continue
                 return holidays[key]
         except Exception:
             continue
@@ -425,15 +448,18 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
             t = yf.Ticker(yf_sym)
             h = t.history(period="5d")
             if h.empty:
-                # 数据为空 → 检测休市
-                holiday = _detect_market_holiday(region)
+                # 数据为空 → 检测上一个交易日是否休市
+                # 盘前分析在早上运行，所有数据都是上一个交易日的数据
+                last_trading_day = _get_last_trading_day()
+                holiday = _detect_market_holiday(region, check_date=last_trading_day)
+                date_str = last_trading_day.strftime("%m月%d日")
                 if holiday:
                     holiday_lines.append(
-                        f"- ⚠️ {cn_name}({code}): 今日休市 — {holiday} [{group}]"
+                        f"- ⚠️ {cn_name}({code}): 最近交易日（{date_str}）休市 — {holiday} [{group}]"
                     )
                 else:
                     holiday_lines.append(
-                        f"- ⚠️ {cn_name}({code}): 数据不可用（可能休市、非交易日或数据延迟）[{group}]"
+                        f"- ⚠️ {cn_name}({code}): 数据不可用（可能{date_str}休市、非交易日或数据延迟）[{group}]"
                     )
                 continue
 
@@ -444,16 +470,18 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
             direction = "↑" if chg_pct > 0 else "↓" if chg_pct < 0 else "-"
             trend_dir = "↑" if trend_5d > 0 else "↓" if trend_5d < 0 else "-"
 
-            # 检查数据新鲜度：最近交易日是否为今天（仅针对有休市检测的区域）
+            # 检查数据新鲜度：数据日期是否为上一个交易日
             data_date = h.index[-1].date() if hasattr(h.index[-1], 'date') else h.index[-1]
-            today = datetime.now().date()
+            last_trading_day = _get_last_trading_day()
+            last_trading_date = last_trading_day.date()
             stale_note = ""
-            if region and data_date != today:
-                days_behind = (today - data_date).days
+            if data_date != last_trading_date:
+                # 数据不是上一个交易日的数据
+                days_behind = (last_trading_date - data_date).days
                 if days_behind == 1:
-                    stale_note = f" [最新数据日期: {data_date}，隔1个自然日]"
-                elif 2 <= days_behind <= 5:
-                    stale_note = f" [最新数据日期: {data_date}，隔{days_behind}个自然日，可能休市]"
+                    stale_note = f" [最新数据日期: {data_date}，为前一个交易日数据]"
+                elif days_behind >= 2:
+                    stale_note = f" [最新数据日期: {data_date}，隔{days_behind}个交易日，可能期间休市]"
 
             lines = data_lines  # 有数据的归入 data_lines
             lines.append(
@@ -462,10 +490,12 @@ def _fetch_global_market_data(include_a50: bool = True, include_hxc: bool = True
             )
         except Exception as e:
             logger.debug("yfinance 拉取 %s 失败: %s", code, e)
-            holiday = _detect_market_holiday(region)
+            last_trading_day = _get_last_trading_day()
+            holiday = _detect_market_holiday(region, check_date=last_trading_day)
+            date_str = last_trading_day.strftime("%m月%d日")
             if holiday:
                 holiday_lines.append(
-                    f"- ⚠️ {cn_name}({code}): 今日休市 — {holiday} [{group}]"
+                    f"- ⚠️ {cn_name}({code}): 最近交易日（{date_str}）休市 — {holiday} [{group}]"
                 )
             else:
                 holiday_lines.append(
